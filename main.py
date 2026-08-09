@@ -3,18 +3,13 @@ import os
 from dotenv import load_dotenv
 
 from langchain_openai import ChatOpenAI
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_anthropic import ChatAnthropic
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-from langchain_core.tools import tool
 import gradio as gr
 
 load_dotenv()
 
 llm = ChatOpenAI(model="gpt-4.1-mini", output_version="responses/v1", streaming=True)
-#llm = ChatAnthropic(model="claude-3-5-sonnet-20241022", streaming=True)
-#llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite", streaming=True)
 
 # Grounds answers in live web search results instead of relying on the model's memory alone.
 llm_with_search = llm.bind_tools([{"type": "web_search"}])
@@ -62,7 +57,7 @@ def extract_web_search_sources(full_response):
 
 
 def stream_response(message, history):
-    print(f"Input: {message}. History: {history}\n")
+    print(f"Input: {message!r} | prior turns: {len(history)}")
 
     history_langchain_format = []
     history_langchain_format.append(SystemMessage(content=system_message))
@@ -78,13 +73,14 @@ def stream_response(message, history):
     if message is not None:
         history_langchain_format.append(HumanMessage(content=message))
         full_response = None
+        partial_message = ""
         for chunk in llm_with_search.stream(history_langchain_format):
             full_response = chunk if full_response is None else full_response + chunk
-            yield full_response.text
+            partial_message = full_response.text
+            yield partial_message
 
         if full_response is None:
             return
-        partial_message = full_response.text
         sources = extract_web_search_sources(full_response)
         if sources:
             partial_message += "\n\n**Sources (web search):**\n"
@@ -127,5 +123,5 @@ if __name__ == "__main__":
         share=False,
         server_name="0.0.0.0",
         server_port=int(os.environ.get("PORT", 7860)),
-        theme=gr.themes.Soft(primary_hue="blue", secondary_hue="slate"),
+        theme=gr.themes.Soft(primary_hue="purple", secondary_hue="slate"),
     )

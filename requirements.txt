@@ -1,7 +1,4 @@
 gradio
 langchain-openai
-langchain-community
-langchain
-langchain-google-genai
-langchain-anthropic
+langchain-core
 python-dotenv
