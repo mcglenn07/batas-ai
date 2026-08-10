@@ -108,9 +108,8 @@ demo_interface = gr.ChatInterface(
     title="⚖️ Batas AI",
     description=PRIVACY_NOTICE,
     examples=STARTER_QUESTIONS,
-    chatbot=gr.Chatbot(label="Consultation"),
-    fill_height=True,
-    fill_width=True,
+    chatbot=gr.Chatbot(label="Consultation", height=480),
+    fill_height=False,
 )
 
 if __name__ == "__main__":
