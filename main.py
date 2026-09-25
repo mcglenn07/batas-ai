@@ -84,11 +84,20 @@ def stream_response(message, history):
             if event.type == "response.output_text.delta":
                 partial_message += event.delta
                 yield partial_message
-            elif event.type == "response.completed":
+            elif event.type in ("response.completed", "response.incomplete"):
                 final_response = event.response
+            elif event.type == "response.failed":
+                # The SDK only raises on top-level "error" events; a failed
+                # response carries its error under event.response instead.
+                error = event.response.error
+                print(f"Response failed: {error}")
+                raise gr.Error("Sorry, something went wrong generating that answer. Please try again.")
 
         if final_response is None:
             return
+        if final_response.status == "incomplete":
+            partial_message += "\n\n_(Answer was cut off before it finished.)_"
+            yield partial_message
         sources = extract_web_search_sources(final_response)
         if sources:
             partial_message += "\n\n**Sources (web search):**\n"
