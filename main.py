@@ -2,17 +2,16 @@ import os
 
 from dotenv import load_dotenv
 
-from langchain_openai import ChatOpenAI
-
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from openai import OpenAI
 import gradio as gr
 
 load_dotenv()
 
-llm = ChatOpenAI(model="gpt-4.1-mini", output_version="responses/v1", streaming=True)
+client = OpenAI()
+MODEL = "gpt-4.1-mini"
 
 # Grounds answers in live web search results instead of relying on the model's memory alone.
-llm_with_search = llm.bind_tools([{"type": "web_search"}])
+TOOLS = [{"type": "web_search"}]
 
 system_message = """You are Batas AI, a legal information assistant focused exclusively on Philippine law.
 
@@ -33,55 +32,64 @@ RESPONSE STYLE
 - Be concise by default; go deeper only when the question calls for nuance.
 """
 
-def extract_web_search_sources(full_response):
-    """Best-effort extraction of OpenAI web_search citations. With
-    output_version="responses/v1", content is a list of blocks; citations
-    live as url_citation annotations on the text blocks. Fails quietly
-    (returns []) rather than crashing chat if the shape changes again."""
+def extract_web_search_sources(response):
+    """Best-effort extraction of OpenAI web_search citations. They live as
+    url_citation annotations on the output_text parts of the response's
+    message items. Fails quietly (returns []) rather than crashing chat if
+    the shape changes."""
     try:
         sources = []
         seen = set()
-        for block in full_response.content or []:
-            if not isinstance(block, dict):
+        for item in response.output or []:
+            if item.type != "message":
                 continue
-            for annotation in block.get("annotations", []) or []:
-                if annotation.get("type") == "url_citation":
-                    url = annotation.get("url")
-                    title = annotation.get("title") or url
-                    if url and url not in seen:
-                        seen.add(url)
-                        sources.append((title, url))
+            for part in item.content or []:
+                for annotation in getattr(part, "annotations", None) or []:
+                    if annotation.type == "url_citation":
+                        url = annotation.url
+                        title = annotation.title or url
+                        if url and url not in seen:
+                            seen.add(url)
+                            sources.append((title, url))
         return sources
     except Exception:
         return []
 
 
+def content_to_text(content):
+    """Gradio 6 normalizes history content to a list of {"type": "text", ...}
+    blocks; the Responses API wants plain text for these turns."""
+    if isinstance(content, str):
+        return content
+    return "".join(
+        block.get("text", "") for block in content or []
+        if isinstance(block, dict) and block.get("type") == "text"
+    )
+
+
 def stream_response(message, history):
     print(f"Input: {message!r} | prior turns: {len(history)}")
 
-    history_langchain_format = []
-    history_langchain_format.append(SystemMessage(content=system_message))
-
-    # Gradio 6's ChatInterface passes history as a flat list of
-    # {"role": ..., "content": ...} dicts, not [user, ai] pairs.
+    messages = [{"role": "system", "content": system_message}]
     for turn in history:
-        if turn["role"] == "user":
-            history_langchain_format.append(HumanMessage(content=turn["content"]))
-        elif turn["role"] == "assistant":
-            history_langchain_format.append(AIMessage(content=turn["content"]))
+        if turn["role"] in ("user", "assistant"):
+            messages.append({"role": turn["role"], "content": content_to_text(turn["content"])})
 
     if message is not None:
-        history_langchain_format.append(HumanMessage(content=message))
-        full_response = None
+        messages.append({"role": "user", "content": message})
+        final_response = None
         partial_message = ""
-        for chunk in llm_with_search.stream(history_langchain_format):
-            full_response = chunk if full_response is None else full_response + chunk
-            partial_message = full_response.text
-            yield partial_message
+        stream = client.responses.create(model=MODEL, input=messages, tools=TOOLS, stream=True)
+        for event in stream:
+            if event.type == "response.output_text.delta":
+                partial_message += event.delta
+                yield partial_message
+            elif event.type == "response.completed":
+                final_response = event.response
 
-        if full_response is None:
+        if final_response is None:
             return
-        sources = extract_web_search_sources(full_response)
+        sources = extract_web_search_sources(final_response)
         if sources:
             partial_message += "\n\n**Sources (web search):**\n"
             partial_message += "\n".join(f"- [{title}]({url})" for title, url in sources)
